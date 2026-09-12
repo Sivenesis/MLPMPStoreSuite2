@@ -1,4 +1,4 @@
-// MLP Store Suite II - Frontend Control Engine (v4.0.0)
+// MLP Store Suite II - Frontend Control Engine (v4.5.0)
 (function () {
   "use strict";
 
