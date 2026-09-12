@@ -45,6 +45,7 @@
 
   // DOM Elements - Controls & Logs
   const elBtnPatch = document.getElementById("btn-patch-now");
+  const elBtnUnpatch = document.getElementById("btn-unpatch-now");
   const elBtnInspect = document.getElementById("btn-inspect-now");
   const elBtnExportLogs = document.getElementById("btn-export-logs");
   const elToggleAutoWatch = document.getElementById("toggle-auto-watch");
@@ -54,6 +55,36 @@
   const elBtnClearLog = document.getElementById("btn-clear-log");
   const elLogFileIndicator = document.getElementById("log-file-indicator");
   const filterBtns = document.querySelectorAll(".filter-btn");
+
+  // DOM Elements - Notification Toast
+  const elToastContainer = document.getElementById("toast-container");
+  const elToastMessage = document.getElementById("toast-message");
+  const elToastClose = document.getElementById("toast-close");
+
+  // Authentication Token from Meta Tag
+  const metaToken = document.querySelector('meta[name="suite-token"]');
+  const suiteToken = metaToken ? metaToken.getAttribute("content") : "";
+
+  function getAuthHeaders(extra = {}) {
+    const headers = { ...extra };
+    if (suiteToken) {
+      headers["X-Suite-Token"] = suiteToken;
+    }
+    return headers;
+  }
+
+  function showToast(message, type = "error") {
+    if (!elToastContainer || !elToastMessage) return;
+    elToastMessage.textContent = message;
+    elToastContainer.className = "toast-container" + (type === "success" ? " toast-success" : "");
+    elToastContainer.style.display = "flex";
+  }
+
+  if (elToastClose) {
+    elToastClose.addEventListener("click", () => {
+      if (elToastContainer) elToastContainer.style.display = "none";
+    });
+  }
 
   // DOM Elements - Catalog Manager
   const elCatalogGrid = document.getElementById("catalog-grid");
@@ -580,7 +611,7 @@
         const selectedArr = Array.from(selectedPonyIds);
         const res = await fetch("/api/catalog/apply", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({ selected_ids: selectedArr }),
         });
         const data = await res.json();
@@ -595,7 +626,7 @@
           if (elBtnApplyCount) elBtnApplyCount.textContent = selectedPonyIds.size;
         }, 1500);
       } catch (err) {
-        alert("Failed to apply store selection: " + err.message);
+        showToast("Failed to apply store selection: " + err.message, "error");
         elBtnApplySelection.disabled = false;
         elBtnApplySelection.innerHTML = originalText;
       }
@@ -608,11 +639,14 @@
       elBtnRescanRam.disabled = true;
       elBtnRescanRam.textContent = "SCANNING RAM...";
       try {
-        await fetch("/api/catalog/rescan", { method: "POST" });
+        await fetch("/api/catalog/rescan", {
+          method: "POST",
+          headers: getAuthHeaders(),
+        });
         await fetchCatalog(true);
         await fetchLogs();
       } catch (err) {
-        alert("Failed to rescan RAM: " + err.message);
+        showToast("Failed to rescan RAM: " + err.message, "error");
       } finally {
         elBtnRescanRam.disabled = false;
         elBtnRescanRam.textContent = "RE-SCAN FROM RAM";
@@ -660,23 +694,62 @@
     elBtnPatch.disabled = true;
     elBtnPatch.textContent = "PATCHING PROCESS MEMORY...";
     try {
-      const res = await fetch("/api/patch", { method: "POST" });
+      const res = await fetch("/api/patch", {
+        method: "POST",
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ allow_version_override: false }),
+      });
       const data = await res.json();
+      if (!data.success) {
+        showToast(data.message || data.error || "Patch operation failed.", "error");
+      } else {
+        showToast(data.message || "Memory patches verified & active.", "success");
+      }
       await fetchStatus();
       await fetchLogs();
     } catch (err) {
-      alert("Failed to send patch command: " + err.message);
+      showToast("Failed to send patch command: " + err.message, "error");
     } finally {
       elBtnPatch.disabled = false;
       elBtnPatch.textContent = "EXECUTE LIVE RAM PATCH & ENABLE PURCHASING";
     }
   });
 
+  // Event: Restore Vanilla State / Unpatch
+  if (elBtnUnpatch) {
+    elBtnUnpatch.addEventListener("click", async () => {
+      elBtnUnpatch.disabled = true;
+      elBtnUnpatch.textContent = "REVERTING TO VANILLA...";
+      try {
+        const res = await fetch("/api/unpatch", {
+          method: "POST",
+          headers: getAuthHeaders({ "Content-Type": "application/json" }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.message || "Restored vanilla state.", "success");
+        } else {
+          showToast(data.error || data.message || "Unpatch operation failed.", "error");
+        }
+        await fetchStatus();
+        await fetchLogs();
+      } catch (err) {
+        showToast("Unpatch request failed: " + err.message, "error");
+      } finally {
+        elBtnUnpatch.disabled = false;
+        elBtnUnpatch.textContent = "RESTORE VANILLA / UNPATCH";
+      }
+    });
+  }
+
   // Event: Deep Inspection
   elBtnInspect.addEventListener("click", async () => {
     elBtnInspect.disabled = true;
     try {
-      await fetch("/api/inspect", { method: "POST" });
+      await fetch("/api/inspect", {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
       await fetchStatus();
       await fetchLogs();
     } catch (err) {
@@ -692,7 +765,10 @@
       elBtnExportLogs.disabled = true;
       elBtnExportLogs.textContent = "SAVING REPORT...";
       try {
-        const res = await fetch("/api/export-logs", { method: "POST" });
+        const res = await fetch("/api/export-logs", {
+          method: "POST",
+          headers: getAuthHeaders(),
+        });
         const data = await res.json();
         await fetchLogs();
       } catch (err) {
@@ -710,7 +786,7 @@
     try {
       await fetch("/api/auto-watch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ enabled }),
       });
       fetchStatus();
@@ -722,7 +798,10 @@
   // Event: Clear Log
   elBtnClearLog.addEventListener("click", async () => {
     try {
-      await fetch("/api/logs/clear", { method: "POST" });
+      await fetch("/api/logs/clear", {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
       fetchLogs();
     } catch (_) {}
   });
