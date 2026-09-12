@@ -8,18 +8,26 @@ The tool runs entirely in RAM via standard Windows APIs. It unlocks 2,380+ chara
 
 ---
 
-## Features
+## Core Functionality
 
-- Zero-Disk Footprint: Operates entirely in process memory (MyLittlePony_x64.exe). No game packages, executables, or save files are modified on disk.
-- Complete In-Game Shop Catalog: Restores visibility for 2,380+ characters directly within the in-game store rotation.
-- Canonical Town Store Isolation: Characters appear strictly in their native town shops (Ponyville, Canterlot, Sweet Apple Acres, Crystal Empire, Klugetown).
-- Purchase & Currency Normalization: Replaces obsolete or unhandled currency references with standard Bits or Gems, eliminating purchase freezes.
-- Fail-Closed Memory Safety: Verifies all original instruction byte signatures before modifying memory. Refuses to patch if bytes or version do not match.
-- Atomic Rollback & Reversion: Automatically restores original memory bytes if any patch step fails. Includes an in-memory "Unpatch / Restore Vanilla" action.
-- Web-Based Management Interface: Search, filter, and selectively toggle characters or entire towns from a local browser dashboard.
-- Transient API Token Authentication: Secures local API endpoints against Cross-Site Request Forgery (CSRF) and unauthorized cross-origin requests.
-- Automatic Background Watcher: Optionally monitors process status and keeps store patches and currencies synchronized across town transitions.
-- Fully Offline: Uses 100% standard Python libraries with zero external pip dependencies and zero external network traffic.
+- One-Click Shop Unlock: The "Execute Live RAM Patch & Enable Purchasing" button dynamically enables the store patch directly in memory, making hidden and limited characters immediately purchasable in the in-game store.
+- Comprehensive Character Catalog: Unlocks and displays 2,380+ ponies, creatures, and shops with full portrait artwork and metadata.
+- Interactive Filtering & Search: Filter catalog items by native town (Ponyville, Canterlot, Sweet Apple Acres, Crystal Empire, Klugetown), store status (Enabled/Disabled), or instant text search.
+- Selective Batch Management: Enable, disable, or invert selections in bulk and write custom shop rosters directly to live memory.
+- Vanilla Rollback: The "Restore Vanilla / Unpatch" button instantly restores original game instructions and resets shop items to default state.
+
+---
+
+## Technical & Architecture Highlights
+
+- Zero-Disk Footprint: Operates strictly in game process memory (MyLittlePony_x64.exe) without altering game executables, packages, or save files.
+- Canonical Town Store Isolation: Enforces native zone boundaries so ponies appear only in their appropriate town shops.
+- Purchase & Currency Normalization: Replaces obsolete or unhandled currency references with Bits or Gems, eliminating store freeze bugs.
+- Fail-Closed Memory Safety: Pre-flight checks verify original instruction bytes and game version before patching; aborts immediately on mismatch.
+- Atomic Rollback System: Snapshot-based rollback restores original memory if any stage of the patch fails.
+- Local API Security: Uses transient session token authentication and strict localhost origin checking to prevent unauthorized cross-origin requests.
+- Automatic Background Watcher: Optionally monitors process health and synchronizes store state across town transitions.
+- Fully Offline & Self-Contained: Built with 100% standard Python libraries—zero external pip packages and zero external network calls.
 
 ---
 
