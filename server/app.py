@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import secrets
 import mimetypes
 from typing import Any
 from pathlib import Path
@@ -21,12 +22,16 @@ mem_patcher.set_auto_watch(True)
 
 WEB_DIR = PROJECT_DIR / "web"
 
+# Transient per-launch security token for API authentication and CSRF prevention
+SESSION_TOKEN = secrets.token_hex(16)
+
 
 def ensure_assets(project_dir: Path = PROJECT_DIR) -> bool:
     """
     Checks if web/assets/portraits contains portrait images.
     If empty or void of image files, automatically extracts from
     web/assets_part*.zip (multi-part archives under GitHub's 25MB limit) or web/assets.zip.
+    Includes strict Zip Slip validation: prohibits traversal patterns and non-PNG members.
     """
     web_dir = project_dir / "web"
     portraits_dir = web_dir / "assets" / "portraits"
@@ -57,14 +62,39 @@ def ensure_assets(project_dir: Path = PROJECT_DIR) -> bool:
         portraits_dir.mkdir(parents=True, exist_ok=True)
         for z_path in zip_files:
             with zipfile.ZipFile(z_path, "r") as zf:
-                namelist = zf.namelist()
-                if any(name.startswith("portraits/") for name in namelist):
-                    dest_dir = web_dir / "assets"
-                elif any(name.startswith("assets/") for name in namelist):
-                    dest_dir = web_dir
-                else:
-                    dest_dir = portraits_dir
-                zf.extractall(dest_dir)
+                for member in zf.infolist():
+                    # 1. Reject paths with directory traversal or absolute roots
+                    norm_name = os.path.normpath(member.filename)
+                    if (
+                        norm_name.startswith("..")
+                        or os.path.isabs(norm_name)
+                        or member.filename.startswith("/")
+                        or member.filename.startswith("\\")
+                    ):
+                        raise RuntimeError(f"Zip Slip traversal blocked for entry: {member.filename}")
+
+                    # 2. Only allow .png portrait image extraction
+                    if not member.filename.lower().endswith(".png"):
+                        continue
+
+                    if member.filename.startswith("portraits/"):
+                        dest_dir = web_dir / "assets"
+                    elif member.filename.startswith("assets/"):
+                        dest_dir = web_dir
+                    else:
+                        dest_dir = portraits_dir
+
+                    # 3. Ensure extracted path resides strictly inside dest_dir
+                    dest_resolved = dest_dir.resolve()
+                    target_path = (dest_dir / member.filename).resolve()
+                    try:
+                        is_safe = target_path.is_relative_to(dest_resolved)
+                    except AttributeError:
+                        is_safe = str(target_path).startswith(str(dest_resolved) + os.sep)
+
+                    if not is_safe:
+                        raise RuntimeError(f"Zip Slip traversal blocked for entry: {member.filename}")
+                    zf.extract(member, dest_dir)
         extracted_count = sum(1 for _ in portraits_dir.glob("*.png"))
         print(f"[ASSETS] Extraction complete: {extracted_count} portraits unpacked to {portraits_dir.name}/.")
         return True
@@ -85,13 +115,31 @@ class RobustThreadingHTTPServer(DefaultHTTPServer):
         exc_type, _, _ = sys.exc_info()
         if exc_type in (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             return
-        pass
+        mem_patcher.log("ERROR", f"Server worker exception: {sys.exc_info()[1]}")
 
 
 class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Keep server console clean
+        # Keep server console clean; internal logs go through mem_patcher
         pass
+
+    def _is_allowed_origin(self) -> bool:
+        """Validates that request Host and Origin headers point strictly to localhost."""
+        host = self.headers.get("Host", "").split(":")[0]
+        if host and host not in ("127.0.0.1", "localhost"):
+            return False
+
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed = urlparse(origin)
+            if parsed.hostname not in ("127.0.0.1", "localhost"):
+                return False
+        return True
+
+    def _verify_token(self) -> bool:
+        """Validates that incoming state-changing request contains valid X-Suite-Token header."""
+        token = self.headers.get("X-Suite-Token")
+        return bool(token and secrets.compare_digest(token, SESSION_TOKEN))
 
     def _send_json(self, data: Any, status: int = 200):
         try:
@@ -99,14 +147,16 @@ class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            origin = self.headers.get("Origin")
+            if origin and self._is_allowed_origin():
+                self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(body)
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             pass
-        except Exception:
-            pass
+        except Exception as ex:
+            mem_patcher.log("ERROR", f"_send_json exception: {ex}")
 
     def _read_json_body(self) -> dict:
         try:
@@ -114,19 +164,23 @@ class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
             if content_length > 0:
                 raw_body = self.rfile.read(content_length).decode("utf-8", errors="replace")
                 return json.loads(raw_body)
-        except Exception:
-            pass
+        except Exception as ex:
+            mem_patcher.log("WARN", f"Failed to parse JSON body: {ex}")
         return {}
 
     def do_OPTIONS(self):
         try:
+            if not self._is_allowed_origin():
+                self.send_error(403, "Cross-Origin Access Forbidden")
+                return
             self.send_response(200)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            origin = self.headers.get("Origin", "http://127.0.0.1:8080")
+            self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Suite-Token, X-MLP-Request")
             self.end_headers()
-        except Exception:
-            pass
+        except Exception as ex:
+            mem_patcher.log("ERROR", f"do_OPTIONS exception: {ex}")
 
     def do_GET(self):
         try:
@@ -146,11 +200,49 @@ class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
                 return
 
             # Static Web files
-            if path == "/" or path == "":
-                file_to_serve = WEB_DIR / "index.html"
-            else:
-                rel = path.lstrip("/")
-                file_to_serve = WEB_DIR / rel
+            if path == "/" or path == "" or path == "/index.html":
+                file_to_serve = (WEB_DIR / "index.html").resolve()
+                if file_to_serve.is_file():
+                    with open(file_to_serve, "r", encoding="utf-8") as f:
+                        html_content = f.read()
+                    # Inject transient session token into HTML for the WebGUI
+                    html_content = html_content.replace("{{SUITE_TOKEN}}", SESSION_TOKEN)
+                    body = html_content.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                else:
+                    self.send_error(404, "index.html not found")
+                    return
+
+            rel = path.lstrip("/")
+            file_to_serve = (WEB_DIR / rel).resolve()
+            web_dir_resolved = WEB_DIR.resolve()
+
+            # Path Traversal Prevention: Ensure target file resides strictly inside WEB_DIR
+            try:
+                is_safe = file_to_serve.is_relative_to(web_dir_resolved)
+            except AttributeError:
+                is_safe = str(file_to_serve).startswith(str(web_dir_resolved) + os.sep)
+
+            # Commonpath defense against separator manipulation
+            try:
+                is_common = os.path.commonpath([str(file_to_serve), str(web_dir_resolved)]) == str(web_dir_resolved)
+            except Exception:
+                is_common = False
+
+            # Prohibit serving hidden files, python code, and zip archives directly
+            blocked_extensions = {".py", ".zip", ".7z"}
+            has_blocked_ext = file_to_serve.suffix.lower() in blocked_extensions
+            is_hidden = any(part.startswith(".") for part in file_to_serve.parts)
+
+            if not (is_safe and is_common) or is_hidden or has_blocked_ext:
+                self.send_error(403, "Access Denied: Path Traversal or Prohibited Resource")
+                return
 
             if not file_to_serve.is_file() and path.startswith("/assets/"):
                 ensure_assets(PROJECT_DIR)
@@ -171,24 +263,42 @@ class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, f"File not found: {path}")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             pass
-        except Exception:
-            pass
+        except Exception as ex:
+            mem_patcher.log("ERROR", f"do_GET exception at {self.path}: {ex}")
+            self.send_error(500, f"Internal Server Error: {ex}")
 
     def do_POST(self):
         try:
+            if not self._is_allowed_origin():
+                self._send_json({"success": False, "error": "Forbidden: Cross-Origin API Access Denied"}, status=403)
+                return
+
+            if not self._verify_token():
+                self._send_json({"success": False, "error": "Forbidden: Invalid or missing X-Suite-Token header"}, status=403)
+                return
+
             parsed = urlparse(self.path)
             path = parsed.path
 
             if path == "/api/patch":
-                res = mem_patcher.patch_memory()
-                self._send_json(res)
+                body = self._read_json_body()
+                allow_override = bool(body.get("allow_version_override", False))
+                res = mem_patcher.patch_memory(allow_version_override=allow_override)
+                status_code = 200 if res.get("success") else 400
+                self._send_json(res, status=status_code)
+                return
+
+            elif path == "/api/unpatch":
+                res = mem_patcher.unpatch_memory()
+                status_code = 200 if res.get("success") else 400
+                self._send_json(res, status=status_code)
                 return
 
             elif path == "/api/auto-watch":
                 body = self._read_json_body()
                 enabled = bool(body.get("enabled", False))
                 mem_patcher.set_auto_watch(enabled)
-                self._send_json({"auto_watch": mem_patcher.auto_watch_enabled})
+                self._send_json({"success": True, "auto_watch": mem_patcher.auto_watch_enabled})
                 return
 
             elif path == "/api/logs/clear":
@@ -235,13 +345,15 @@ class StoreSuiteRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Endpoint not found")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
             pass
-        except Exception:
-            pass
+        except Exception as ex:
+            mem_patcher.log("ERROR", f"do_POST exception at {self.path}: {ex}")
+            self._send_json({"success": False, "error": f"Internal Server Error: {ex}"}, status=500)
 
 
 def run_server(port: int = 8080):
     server_address = ("127.0.0.1", port)
     httpd = RobustThreadingHTTPServer(server_address, StoreSuiteRequestHandler)
+    print(f"[SECURITY] Session Security Token generated: {SESSION_TOKEN}")
     print(f"MLPStoreSuite2 Server running at http://127.0.0.1:{port}/")
     try:
         httpd.serve_forever()
