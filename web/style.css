@@ -296,6 +296,54 @@ body {
   background-color: rgba(255, 170, 0, 0.1);
 }
 
+.btn-danger {
+  background-color: transparent;
+  color: var(--accent-red);
+  border: 1px solid var(--accent-red);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: rgba(255, 68, 68, 0.15);
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.25);
+}
+
+.toast-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 0;
+  padding: 12px 18px;
+  background-color: rgba(255, 68, 68, 0.15);
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.5px;
+}
+
+.toast-container.toast-success {
+  background-color: rgba(0, 230, 118, 0.15);
+  border-color: var(--accent-green);
+  color: #fff;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  opacity: 0.8;
+  transition: opacity 0.2s;
+}
+
+.toast-close:hover {
+  opacity: 1;
+}
+
 .section-header-badges {
   display: flex;
   align-items: center;
