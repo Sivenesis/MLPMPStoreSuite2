@@ -25,7 +25,7 @@ def main():
 
     print(f"==================================================")
     print(f"       MLP STORE SUITE II - IN-GAME MEMORY PATCHER")
-    print(f"       Version: v4.0.0 (Pure Functional Runtime)")
+    print(f"       Version: v4.5.0 (Pure Functional Runtime)")
     print(f"==================================================")
     print(f"Target Process: MyLittlePony_x64.exe")
     print(f"Web Interface:  http://127.0.0.1:{port}/")
