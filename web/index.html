@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MLP Store Suite II - In-Game Memory Patcher & Purchase Enabler</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <span class="system-prefix">SYS://</span>
+        <h1 class="system-title">MLP STORE SUITE II</h1>
+        <span class="version-tag" id="app-version">v4.0.0</span>
+        <span class="game-tag" id="app-game-version">GAME v11.4.1a</span>
+        <span class="offline-tag" id="app-offline-tag">STRICT OFFLINE READY</span>
+      </div>
+      <div class="header-right">
+        <div class="status-indicator" id="process-status-badge">
+          <span class="indicator-dot" id="process-dot"></span>
+          <span class="indicator-text" id="process-text">INITIALIZING...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Red Disclaimer Banner -->
+    <div class="disclaimer-banner">
+      <span class="disclaimer-badge">DISCLAIMER</span>
+      <span class="disclaimer-text">NON-AFFILIATION &amp; COPYRIGHT NOTICE: The creator of this tool does not claim ownership of any copyrighted material, trademarks, characters, assets, or intellectual property. All rights belong to their respective owners (Hasbro, Gameloft, and associated parties). This utility is an unofficial, non-commercial singleplayer tool created solely for personal entertainment and educational purposes.</span>
+    </div>
+
+    <!-- Version Warning Banner (Non-blocking, displayed only on version mismatch) -->
+    <div class="version-warning-banner" id="version-warning-banner" style="display: none;">
+      <span class="version-warning-badge">VERSION NOTICE</span>
+      <span class="version-warning-text" id="version-warning-text"></span>
+    </div>
+
+    <!-- Main Dashboard Grid -->
+    <main class="dashboard">
+      <!-- Row 1: System Telemetry Cards -->
+      <section class="telemetry-grid">
+        <!-- Target Process Card -->
+        <div class="telemetry-card">
+          <div class="card-label">TARGET BINARY</div>
+          <div class="card-value code" id="val-target-name">MyLittlePony_x64.exe</div>
+          <div class="card-sub code" id="val-pid-base">PID: - | BASE: -</div>
+        </div>
+
+        <!-- In-Game State Card -->
+        <div class="telemetry-card">
+          <div class="card-label">LIVE TOWN & STORE SECTION</div>
+          <div class="card-value" id="val-zone-name">Checking...</div>
+          <div class="card-sub code" id="val-zone-id">STORE TAB: - | ISOLATION: VANILLA</div>
+        </div>
+
+        <!-- Live Player Economy Card -->
+        <div class="telemetry-card">
+          <div class="card-label">PLAYER IN-GAME CURRENCY</div>
+          <div class="card-value currency" id="val-player-currency">BITS: - | GEMS: -</div>
+          <div class="card-sub code" id="val-player-mgr">PLAYER CONTROLLER: -</div>
+        </div>
+
+        <!-- Shop Engine State Card -->
+        <div class="telemetry-card">
+          <div class="card-label">SHOP & CURRENCY NORMALIZATION</div>
+          <div class="card-value" id="val-shop-items">- ITEMS</div>
+          <div class="card-sub code" id="val-sync-state">CURRENCY: NORMALIZED (BITS/GEMS)</div>
+        </div>
+      </section>
+
+      <!-- Row 2: Master Actions & Controls -->
+      <section class="controls-panel">
+        <div class="primary-actions">
+          <button type="button" class="btn btn-primary" id="btn-patch-now">
+            EXECUTE LIVE RAM PATCH & ENABLE PURCHASING
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-inspect-now">
+            RUN DEEP MEMORY INSPECTION
+          </button>
+          <button type="button" class="btn btn-tertiary" id="btn-export-logs">
+            SAVE DIAGNOSTIC REPORT TO LOGS
+          </button>
+        </div>
+
+        <div class="control-options">
+          <label class="toggle-control" for="toggle-auto-watch">
+            <input type="checkbox" id="toggle-auto-watch" checked>
+            <span class="toggle-box"></span>
+            <span class="toggle-text">Auto-Watch (Continuously enforce memory hooks, currencies & town isolation across game reloads)</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Row 3: In-Game Store Pony Selection & Catalog Manager -->
+      <section class="catalog-section" id="catalog-section">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2>IN-GAME STORE PONY SELECTION & CATALOG MANAGER</h2>
+            <span class="game-version-pill" id="game-version-badge">CLIENT: v11.4.1a</span>
+            <span class="mode-pill" id="network-mode-badge">STRICT OFFLINE (LOCAL RAM & ASSETS)</span>
+          </div>
+          <div class="section-header-badges">
+            <span class="catalog-stat-badge" id="catalog-selection-summary">SELECTED: 2381 / 2381 PONIES</span>
+            <button type="button" class="btn-sm btn-rescan" id="btn-rescan-ram" title="Re-read live game RAM and update local database">RE-SCAN FROM RAM</button>
+          </div>
+        </div>
+
+        <!-- Catalog Toolbar: Town Tabs, Search, and Action Presets -->
+        <div class="catalog-toolbar">
+          <!-- Filters Row: Town Tabs + Status Filter (All / Enabled / Disabled) -->
+          <div class="filters-row">
+            <div class="town-tabs" id="town-filter-tabs">
+              <button type="button" class="town-tab active" data-zone="ALL">ALL TOWNS (<span id="count-zone-all">2381</span>)</button>
+              <button type="button" class="town-tab" data-zone="0">PONYVILLE (<span id="count-zone-0">1696</span>)</button>
+              <button type="button" class="town-tab" data-zone="1">CANTERLOT (<span id="count-zone-1">312</span>)</button>
+              <button type="button" class="town-tab" data-zone="2">S.A. ACRES (<span id="count-zone-2">229</span>)</button>
+              <button type="button" class="town-tab" data-zone="4">CRYSTAL EMPIRE (<span id="count-zone-4">104</span>)</button>
+              <button type="button" class="town-tab" data-zone="6">KLUGETOWN (<span id="count-zone-6">40</span>)</button>
+            </div>
+
+            <div class="status-filter-group" id="status-filter-tabs">
+              <button type="button" class="status-tab active" data-status="ALL">ALL STATUS</button>
+              <button type="button" class="status-tab status-tab-enabled" data-status="ENABLED">ENABLED (<span id="count-status-enabled">2381</span>)</button>
+              <button type="button" class="status-tab status-tab-disabled" data-status="DISABLED">DISABLED (<span id="count-status-disabled">0</span>)</button>
+            </div>
+          </div>
+
+          <!-- Real-Time Search & Selection Presets -->
+          <div class="catalog-search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">&gt;</span>
+              <input type="text" id="catalog-search-input" placeholder="Filter by pony name or internal ID (e.g. Twilight, Celestia, 8-Bit)..." autocomplete="off" spellcheck="false">
+              <button type="button" class="btn-clear-search" id="btn-clear-search" title="Clear search">&times;</button>
+            </div>
+
+            <div class="catalog-action-presets">
+              <button type="button" class="preset-btn btn-select-search" id="btn-select-search" style="display: none;">SELECT SEARCH (<span id="btn-select-search-count">0</span>)</button>
+              <button type="button" class="preset-btn" id="btn-select-all">SELECT ALL (2,381)</button>
+              <button type="button" class="preset-btn" id="btn-select-none">CLEAR ALL</button>
+              <button type="button" class="preset-btn" id="btn-select-current-town">CURRENT TOWN ONLY</button>
+              <button type="button" class="preset-btn" id="btn-invert-selection">INVERT</button>
+              <button type="button" class="btn btn-apply-selection" id="btn-apply-selection">
+                APPLY SELECTION TO STORE (<span id="btn-apply-count">2,381</span>)
+              </button>
+            </div>
+          </div>
+
+          <div class="catalog-banner-tip">
+            <span class="tip-badge">SHELF SYNC</span>
+            <span class="tip-text">After clicking <b>APPLY SELECTION</b>, the store shelf in RAM is updated immediately. In-game, switch store tabs or reopen the store to view your custom shelf.</span>
+          </div>
+        </div>
+
+        <!-- High-Performance Virtualized/Paged Pony Cards Grid -->
+        <div class="catalog-grid-wrap">
+          <div class="catalog-grid" id="catalog-grid">
+            <div class="catalog-loading">Loading 2,381 ponies from local database...</div>
+          </div>
+        </div>
+
+        <!-- Catalog Footer & Pagination Info -->
+        <div class="catalog-footer">
+          <div class="catalog-footer-left">
+            Showing <span id="showing-count">0</span> of <span id="matching-count">0</span> matching ponies (<span id="active-store-count">0</span> active in in-game store)
+          </div>
+          <div class="catalog-footer-right" id="pagination-controls">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Row 4: Engine Hook Diagnostics -->
+      <section class="hooks-section section-collapsed" id="hooks-section">
+        <div class="section-header collapsable-header" id="hooks-header" title="Click to expand / collapse section">
+          <div class="section-header-title-wrap">
+            <span class="collapse-icon" id="hooks-collapse-icon">▶</span>
+            <h2>ENGINE INTERCEPTORS &amp; PURCHASE PIPELINE HOOKS</h2>
+          </div>
+          <div class="section-header-badges">
+            <span class="isolation-badge">TOWN STORE ISOLATION: VANILLA ENFORCED</span>
+            <span class="section-sub" id="hooks-count-badge">0/8 ACTIVE</span>
+            <button type="button" class="btn-section-toggle" id="btn-toggle-hooks">SHOW</button>
+          </div>
+        </div>
+        <div class="hooks-grid" id="hooks-container">
+          <!-- Populated dynamically by app.js -->
+          <div class="hook-card skeleton">Loading hooks...</div>
+        </div>
+      </section>
+
+      <!-- Row 5: Diagnostic Log Console -->
+      <section class="terminal-section section-collapsed" id="terminal-section">
+        <div class="terminal-header collapsable-header" id="terminal-header" title="Click to expand / collapse section">
+          <div class="terminal-title">
+            <span class="collapse-icon" id="terminal-collapse-icon">▶</span>
+            <span class="terminal-prompt">&gt;_</span>
+            OPERATION TELEMETRY &amp; DEBUG LOG
+            <span class="terminal-log-file code" id="log-file-indicator">logs/suite_debug.log</span>
+          </div>
+          <div class="terminal-controls">
+            <div class="filter-group">
+              <button type="button" class="filter-btn active" data-filter="ALL">ALL</button>
+              <button type="button" class="filter-btn" data-filter="INFO">INFO</button>
+              <button type="button" class="filter-btn" data-filter="HOOK">HOOK</button>
+              <button type="button" class="filter-btn" data-filter="SYNC">SYNC</button>
+              <button type="button" class="filter-btn" data-filter="REPORT">REPORT</button>
+              <button type="button" class="filter-btn" data-filter="DEBUG">DEBUG</button>
+              <button type="button" class="filter-btn" data-filter="ERROR">ERROR</button>
+            </div>
+            <button type="button" class="btn-clear" id="btn-clear-log">CLEAR</button>
+            <button type="button" class="btn-section-toggle" id="btn-toggle-terminal">SHOW</button>
+          </div>
+        </div>
+        <div class="terminal-window" id="terminal-body">
+          <div class="log-entry info"><span class="log-time">[00:00:00]</span> <span class="log-tag tag-info">[INFO]</span> Initializing system interface...</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-left">MLP STORE SUITE II // LIVE MEMORY ARCHITECTURE</div>
+      <div class="footer-right">STANDALONE SINGLEPLAYER RUNTIME // STRICTLY LOCAL</div>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
