@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="suite-token" content="{{SUITE_TOKEN}}">
   <title>MLP Store Suite II - In-Game Memory Patcher & Purchase Enabler</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -35,6 +36,12 @@
     <div class="version-warning-banner" id="version-warning-banner" style="display: none;">
       <span class="version-warning-badge">VERSION NOTICE</span>
       <span class="version-warning-text" id="version-warning-text"></span>
+    </div>
+
+    <!-- UI Notification / Alert Banner Container -->
+    <div class="toast-container" id="toast-container" style="display: none;">
+      <div class="toast-message" id="toast-message"></div>
+      <button type="button" class="toast-close" id="toast-close" title="Dismiss">&times;</button>
     </div>
 
     <!-- Main Dashboard Grid -->
@@ -75,6 +82,9 @@
         <div class="primary-actions">
           <button type="button" class="btn btn-primary" id="btn-patch-now">
             EXECUTE LIVE RAM PATCH & ENABLE PURCHASING
+          </button>
+          <button type="button" class="btn btn-danger" id="btn-unpatch-now">
+            RESTORE VANILLA / UNPATCH
           </button>
           <button type="button" class="btn btn-secondary" id="btn-inspect-now">
             RUN DEEP MEMORY INSPECTION
