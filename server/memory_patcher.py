@@ -106,7 +106,7 @@ class MemoryPatcher:
     Enforces strict town isolation so ponies appear exclusively in their home town store sections.
     """
 
-    VERSION = "v4.0.0"
+    VERSION = "v4.5.0"
     GAME_VERSION = "11.4.1a"
     SUPPORTED_VERSIONS = {"11.4.1a", "11.4.0.0"}  # 11.4.0.0 is the package version for release 11.4.1a
     TARGET_PROCESS_NAME = "MyLittlePony_x64.exe"
