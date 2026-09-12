@@ -1,6 +1,6 @@
 # Reverse-Engineering Technical Report: MLP Store Suite II
 
-**Document Version:** 4.1.0  
+**Document Version:** 4.5.0  
 **Target Game Client:** *My Little Pony: Magic Princess* (Windows x64 / v11.4.1a, Package Manifest Version: `11.4.0.0`)  
 **Binary Analyzed:** `MyLittlePony_x64.exe` (PE64 executable)  
 **Security & Reliability Standard:** Enterprise-Hardened In-Memory Injection  
