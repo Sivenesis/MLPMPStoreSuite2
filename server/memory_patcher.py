@@ -15,6 +15,7 @@ PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 PROCESS_VM_OPERATION = 0x0008
 PROCESS_ALL_ACCESS = 0x1F0FFF
+PROCESS_SAFE_RIGHTS = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION  # 0x0438
 
 PAGE_EXECUTE_READWRITE = 0x40
 
@@ -107,6 +108,7 @@ class MemoryPatcher:
 
     VERSION = "v4.0.0"
     GAME_VERSION = "11.4.1a"
+    SUPPORTED_VERSIONS = {"11.4.1a", "11.4.0.0"}  # 11.4.0.0 is the package version for release 11.4.1a
     TARGET_PROCESS_NAME = "MyLittlePony_x64.exe"
 
     # Static RVAs for Game Engine Controllers
@@ -316,23 +318,96 @@ class MemoryPatcher:
             self._write_bytes(h_process, base_addr + 0x6C9600, self.VANILLA_ZONE_BYTES)
             self.log("HOOK", "Restored 0x6C9600 to pristine vanilla. Town store section isolation ENFORCED.")
 
+    def _is_valid_user_ptr(self, ptr: int) -> bool:
+        """Validates that a pointer is within valid 64-bit Windows user-mode address space."""
+        return isinstance(ptr, int) and 0x10000 <= ptr <= 0x7FFFFFFFFFFF
+
     def _get_item_id(self, h_process: wintypes.HANDLE, arr_buf: bytes, off: int, index: int) -> str:
-        """Retrieves and caches internal item identifier string."""
+        """Retrieves and caches internal item identifier string with pointer sanity checks."""
         if index in self._item_id_cache:
             return self._item_id_cache[index]
 
         intern_ptr = struct.unpack("<Q", arr_buf[off + 0x18:off + 0x20])[0]
-        if intern_ptr:
+        if self._is_valid_user_ptr(intern_ptr):
             s_ptr_buf = self._read_bytes(h_process, intern_ptr + 8, 8)
             if s_ptr_buf:
                 s_ptr = struct.unpack("<Q", s_ptr_buf)[0]
-                if s_ptr:
+                if self._is_valid_user_ptr(s_ptr):
                     name_b = self._read_bytes(h_process, s_ptr, 64)
                     if name_b:
                         clean_id = name_b.split(b"\x00")[0].decode("latin-1", errors="ignore")
                         self._item_id_cache[index] = clean_id
                         return clean_id
         return ""
+
+    def revert_live_shop_items(self, h_process: wintypes.HANDLE, base_addr: int) -> int:
+        """
+        Reverts live shop array items to vanilla state (clears forced b125 and b126 flags).
+        """
+        ctrl_buf = self._read_bytes(h_process, base_addr + self.OFFSET_SHOP_CONTROLLER, 8)
+        if not ctrl_buf:
+            return 0
+        ctrl_addr = struct.unpack("<Q", ctrl_buf)[0]
+        if not self._is_valid_user_ptr(ctrl_addr):
+            return 0
+
+        hdr_buf = self._read_bytes(h_process, ctrl_addr, 0x500)
+        if not hdr_buf:
+            return 0
+
+        start_ptr = struct.unpack("<Q", hdr_buf[0x438:0x440])[0]
+        end_ptr = struct.unpack("<Q", hdr_buf[0x440:0x448])[0]
+        stride = 0x158
+
+        if not self._is_valid_user_ptr(start_ptr) or not self._is_valid_user_ptr(end_ptr) or end_ptr <= start_ptr:
+            return 0
+
+        total_items = (end_ptr - start_ptr) // stride
+        if total_items <= 0 or total_items > 20000:
+            return 0
+
+        arr_buf = self._read_bytes(h_process, start_ptr, total_items * stride)
+        if not arr_buf:
+            return 0
+
+        zero_byte = b'\x00'
+        written = ctypes.c_size_t()
+        reverted = 0
+
+        for i in range(total_items):
+            off = i * stride
+            item_addr = start_ptr + off
+            if arr_buf[off + 0x125] != 0:
+                if WriteProcessMemory(h_process, ctypes.c_void_p(item_addr + 0x125), zero_byte, 1, ctypes.byref(written)):
+                    reverted += 1
+            if arr_buf[off + 0x126] != 0:
+                WriteProcessMemory(h_process, ctypes.c_void_p(item_addr + 0x126), zero_byte, 1, ctypes.byref(written))
+
+        return reverted
+
+    def _create_transaction_snapshot(self, h_process: wintypes.HANDLE, base_addr: int) -> Dict[str, bytes]:
+        """Captures memory state of all hook sites and 0x6C9600 for atomic rollback."""
+        snapshot: Dict[str, bytes] = {}
+        for key, info in self.PATCHES.items():
+            addr = base_addr + info["rva"]
+            cur = self._read_bytes(h_process, addr, len(info["patch"]))
+            if cur:
+                snapshot[key] = cur
+        zone_bytes = self._read_bytes(h_process, base_addr + 0x6C9600, len(self.VANILLA_ZONE_BYTES))
+        if zone_bytes:
+            snapshot["ZONE_CHECK"] = zone_bytes
+        return snapshot
+
+    def _rollback_transaction(self, h_process: wintypes.HANDLE, base_addr: int, snapshot: Dict[str, bytes]):
+        """Restores memory hook sites from snapshot on write/sync failure."""
+        self.log("WARN", "Executing atomic rollback of memory hooks...")
+        for key, saved_bytes in snapshot.items():
+            if key in self.PATCHES:
+                addr = base_addr + self.PATCHES[key]["rva"]
+                self._write_bytes(h_process, addr, saved_bytes)
+            elif key == "ZONE_CHECK":
+                self._write_bytes(h_process, base_addr + 0x6C9600, saved_bytes)
+        self.log("INFO", "Rollback completed. Original hook bytes restored.")
 
     def sync_live_shop_items(self, h_process: wintypes.HANDLE, base_addr: int) -> Tuple[int, int, int]:
         """
@@ -346,7 +421,7 @@ class MemoryPatcher:
         if not ctrl_buf:
             return 0, 0, 0
         ctrl_addr = struct.unpack("<Q", ctrl_buf)[0]
-        if not ctrl_addr:
+        if not self._is_valid_user_ptr(ctrl_addr):
             return 0, 0, 0
 
         hdr_buf = self._read_bytes(h_process, ctrl_addr, 0x500)
@@ -357,7 +432,7 @@ class MemoryPatcher:
         end_ptr = struct.unpack("<Q", hdr_buf[0x440:0x448])[0]
         stride = 0x158
 
-        if not start_ptr or not end_ptr or end_ptr <= start_ptr:
+        if not self._is_valid_user_ptr(start_ptr) or not self._is_valid_user_ptr(end_ptr) or end_ptr <= start_ptr:
             return 0, 0, 0
 
         total_items = (end_ptr - start_ptr) // stride
@@ -575,15 +650,18 @@ class MemoryPatcher:
                 except Exception:
                     pass
 
-        # Target matching: Windows package version "11.4.0.0", internal "11.4.0" / "11.4.0m", or release "11.4.1a"
-        is_matched = True
+        # Target matching: Strictly accept tested release "11.4.1a" or package manifest version "11.4.0.0"
+        is_matched = False
         warning = None
         if detected_version:
-            if detected_version.startswith("11.4.") or detected_version in ("11.4.1a", "11.4.0", "11.4.0.0"):
+            if detected_version in self.SUPPORTED_VERSIONS:
                 is_matched = True
             else:
                 is_matched = False
-                warning = f"Game client version mismatch: Detected {detected_version}, but tool is tested for v{self.GAME_VERSION}. Some memory offsets may differ."
+                warning = f"Game client version mismatch: Detected '{detected_version}', but tool is strictly tested for v{self.GAME_VERSION} (package 11.4.0.0). Memory offsets may differ."
+        else:
+            is_matched = True
+            warning = f"Unable to verify game client version automatically. Proceeding with caution for target v{self.GAME_VERSION}."
 
         return {
             "target": self.GAME_VERSION,
@@ -653,12 +731,16 @@ class MemoryPatcher:
             "log_file": "logs/suite_debug.log",
         }
 
-    def patch_memory(self) -> Dict[str, Any]:
+    def patch_memory(self, allow_version_override: bool = False) -> Dict[str, Any]:
         """
-        Executes complete in-memory patching & array synchronization:
-        1. Remediates legacy stubs & restores 0x6C9600 to pristine vanilla.
-        2. Applies all 8 master in-place hooks.
-        3. Synchronizes live ShopManager array: b125=1, b126=1, SortPrice>=1.0, encrypts runtime currencies.
+        Executes complete in-memory patching & array synchronization with atomic rollback:
+        1. Pre-flight Version Gate: Verifies client against SUPPORTED_VERSIONS (11.4.1a / 11.4.0.0).
+        2. Pre-flight Signature Check: Validates all hook sites against 'orig' vanilla bytes (fail-closed).
+        3. Transaction Snapshot: Saves current bytes of all hook sites.
+        4. Remediates legacy stubs & restores 0x6C9600 to pristine vanilla.
+        5. Applies all 8 master in-place hooks with read-back verification.
+        6. Synchronizes live ShopManager array: b125=1, b126=1, SortPrice>=1.0, encrypts runtime currencies.
+        7. On any failure: triggers automatic rollback to snapshot.
         """
         pid = self.find_process()
         if not pid:
@@ -678,7 +760,7 @@ class MemoryPatcher:
             self.last_patch_result = res
             return res
 
-        h_process = OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+        h_process = OpenProcess(PROCESS_SAFE_RIGHTS, False, pid)
         if not h_process:
             err = ctypes.get_last_error()
             msg = f"Failed to open process PID {pid} (Win32 Error: {err}). Run with Admin privileges if needed."
@@ -718,30 +800,112 @@ class MemoryPatcher:
 
             self.log("INFO", f"Connected to {self.TARGET_PROCESS_NAME} (PID {pid}) at Module Base 0x{base_addr:X}.")
 
-            # 1. Remediate legacy stubs & restore 0x6C9600 to pure vanilla
-            self.remediate_stale_stubs(h_process, base_addr)
+            # Pre-flight 1: Strict Version Gate
+            ver_info = self.detect_game_version(h_process, base_addr)
+            if not ver_info["matched"] and not allow_version_override:
+                msg = f"Patch aborted: {ver_info['warning']}"
+                self.log("ERROR", msg)
+                res = {
+                    "success": False,
+                    "message": msg,
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "pid": pid,
+                    "base": f"0x{base_addr:X}",
+                    "hooks_applied": 0,
+                    "synced_items": 0,
+                    "currencies_fixed": 0,
+                    "prices_fixed": 0,
+                }
+                self.last_patch_result = res
+                return res
 
-            # 2. Apply all 8 master in-place hooks
-            applied = 0
+            # Pre-flight 2: Original-Byte Signature Check (Fail-Closed)
             for key, info in self.PATCHES.items():
                 addr = base_addr + info["rva"]
-                cur_bytes = self._read_bytes(h_process, addr, len(info["patch"]))
-                if cur_bytes == info["patch"]:
-                    applied += 1
-                    continue
+                cur_orig = self._read_bytes(h_process, addr, len(info["orig"]))
+                cur_patch = self._read_bytes(h_process, addr, len(info["patch"]))
 
-                if self._write_bytes(h_process, addr, info["patch"]):
-                    applied += 1
-                    self.log("HOOK", f"Installed {info['name']} at 0x{info['rva']:X} (OK).")
-                else:
-                    err = ctypes.get_last_error()
-                    self.log("ERROR", f"Failed to write patch {info['name']} at 0x{info['rva']:X} (Error {err}).")
+                if cur_patch == info["patch"]:
+                    continue  # already patched
+                if cur_orig == info["orig"]:
+                    continue  # pristine vanilla, safe to patch
 
-            # 3. Synchronize live ShopManager array & currencies
-            synced, currencies_fixed, prices_fixed = self.sync_live_shop_items(h_process, base_addr)
-            self.log("SYNC", f"Live array sync: {synced} items elevated, {currencies_fixed} currencies normalized, {prices_fixed} prices set.")
+                # Mismatch -> Fail Closed immediately
+                expected_hex = info["orig"].hex()
+                found_hex = cur_orig.hex() if cur_orig else "None"
+                msg = (
+                    f"Signature mismatch at {info['name']} (0x{info['rva']:X}): "
+                    f"Expected original bytes [{expected_hex}], found [{found_hex}]. "
+                    f"Patching aborted to protect process stability."
+                )
+                self.log("ERROR", msg)
+                res = {
+                    "success": False,
+                    "message": msg,
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "pid": pid,
+                    "base": f"0x{base_addr:X}",
+                    "hooks_applied": 0,
+                    "synced_items": 0,
+                    "currencies_fixed": 0,
+                    "prices_fixed": 0,
+                }
+                self.last_patch_result = res
+                return res
 
-            # 4. Read updated game telemetry
+            # Step 3: Transaction Snapshot for Rollback
+            snapshot = self._create_transaction_snapshot(h_process, base_addr)
+
+            # Step 4: Apply Hooks & Synchronize within Transaction
+            try:
+                # 4a. Remediate legacy stubs & restore 0x6C9600 to pure vanilla
+                self.remediate_stale_stubs(h_process, base_addr)
+
+                # 4b. Apply all 8 master in-place hooks
+                applied = 0
+                for key, info in self.PATCHES.items():
+                    addr = base_addr + info["rva"]
+                    cur_bytes = self._read_bytes(h_process, addr, len(info["patch"]))
+                    if cur_bytes == info["patch"]:
+                        applied += 1
+                        continue
+
+                    if self._write_bytes(h_process, addr, info["patch"]):
+                        applied += 1
+                        self.log("HOOK", f"Installed {info['name']} at 0x{info['rva']:X} (OK).")
+                    else:
+                        err = ctypes.get_last_error()
+                        raise RuntimeError(f"Failed to write patch {info['name']} at 0x{info['rva']:X} (Win32 Error: {err})")
+
+                # 4c. Read-back verification
+                for key, info in self.PATCHES.items():
+                    addr = base_addr + info["rva"]
+                    read_back = self._read_bytes(h_process, addr, len(info["patch"]))
+                    if read_back != info["patch"]:
+                        raise RuntimeError(f"Read-back verification failed for {info['name']} at 0x{info['rva']:X}")
+
+                # 4d. Synchronize live ShopManager array & currencies
+                synced, currencies_fixed, prices_fixed = self.sync_live_shop_items(h_process, base_addr)
+                self.log("SYNC", f"Live array sync: {synced} items elevated, {currencies_fixed} currencies normalized, {prices_fixed} prices set.")
+
+            except Exception as ex:
+                self.log("ERROR", f"Transaction failure during patching: {ex}")
+                self._rollback_transaction(h_process, base_addr, snapshot)
+                res = {
+                    "success": False,
+                    "message": f"Patch transaction failed and was rolled back: {ex}",
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "pid": pid,
+                    "base": f"0x{base_addr:X}",
+                    "hooks_applied": 0,
+                    "synced_items": 0,
+                    "currencies_fixed": 0,
+                    "prices_fixed": 0,
+                }
+                self.last_patch_result = res
+                return res
+
+            # Step 5: Read updated game telemetry
             telemetry = self.get_game_telemetry(h_process, base_addr)
             if telemetry.get("bits") is not None and telemetry.get("gems") is not None:
                 self.log("INFO", f"Game State: Town={telemetry['zone_name']}, StoreTab={telemetry['shop_category_zone_name']}, Bits={telemetry['bits']:,}, Gems={telemetry['gems']:,}")
@@ -770,6 +934,65 @@ class MemoryPatcher:
             self.last_patch_result = res
             return res
 
+        finally:
+            CloseHandle(h_process)
+
+    def unpatch_memory(self) -> Dict[str, Any]:
+        """
+        Reverts all in-memory hooks and restores vanilla shop state:
+        1. Writes original bytes ('orig') back to all 8 master hook sites.
+        2. Restores 0x6C9600 to pristine vanilla bytes.
+        3. Reverts live shop items (clears forced b125 and b126 flags).
+        """
+        pid = self.find_process()
+        if not pid:
+            msg = f"{self.TARGET_PROCESS_NAME} is not running."
+            self.log("WARN", msg)
+            return {"success": False, "error": msg}
+
+        h_process = OpenProcess(PROCESS_SAFE_RIGHTS, False, pid)
+        if not h_process:
+            err = ctypes.get_last_error()
+            msg = f"Failed to open process PID {pid} (Win32 Error: {err})."
+            self.log("ERROR", msg)
+            return {"success": False, "error": msg}
+
+        try:
+            base_addr = self.get_main_module_base(h_process)
+            if not base_addr:
+                msg = f"Failed to retrieve main module base address for PID {pid}."
+                self.log("ERROR", msg)
+                return {"success": False, "error": msg}
+
+            reverted_hooks = 0
+            for key, info in self.PATCHES.items():
+                addr = base_addr + info["rva"]
+                cur_bytes = self._read_bytes(h_process, addr, len(info["orig"]))
+                if cur_bytes == info["orig"]:
+                    reverted_hooks += 1
+                    continue
+                if self._write_bytes(h_process, addr, info["orig"]):
+                    reverted_hooks += 1
+                    self.log("RESTORE", f"Restored vanilla bytes for {info['name']} at 0x{info['rva']:X}.")
+                else:
+                    self.log("ERROR", f"Failed to revert patch {info['name']} at 0x{info['rva']:X}.")
+
+            # Restore 0x6C9600
+            zone_cur = self._read_bytes(h_process, base_addr + 0x6C9600, len(self.VANILLA_ZONE_BYTES))
+            if zone_cur != self.VANILLA_ZONE_BYTES:
+                self._write_bytes(h_process, base_addr + 0x6C9600, self.VANILLA_ZONE_BYTES)
+                self.log("RESTORE", "Restored 0x6C9600 to pure vanilla IsAllowedInZone bytes.")
+
+            reverted_items = self.revert_live_shop_items(h_process, base_addr)
+            status_msg = f"Unpatch Complete: {reverted_hooks}/{len(self.PATCHES)} hooks restored to vanilla. {reverted_items} shop items reset."
+            self.log("SUCCESS", status_msg)
+
+            return {
+                "success": (reverted_hooks == len(self.PATCHES)),
+                "message": status_msg,
+                "reverted_hooks": reverted_hooks,
+                "reverted_items": reverted_items,
+            }
         finally:
             CloseHandle(h_process)
 
@@ -879,7 +1102,7 @@ class MemoryPatcher:
         while self.auto_watch_enabled:
             pid = self.find_process()
             if pid:
-                h_process = OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+                h_process = OpenProcess(PROCESS_SAFE_RIGHTS, False, pid)
                 if h_process:
                     try:
                         base_addr = self.get_main_module_base(h_process)
@@ -1004,7 +1227,7 @@ class MemoryPatcher:
                 "selected_count": len(self.custom_selection) if self.custom_selection is not None else 2381,
             }
 
-        h_process = OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+        h_process = OpenProcess(PROCESS_SAFE_RIGHTS, False, pid)
         if not h_process:
             return {
                 "success": False,
