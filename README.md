@@ -18,7 +18,7 @@ The tool runs completely in RAM via the Windows API, enabling all 2,380+ charact
 - **Dynamic Auto-Watch Daemon**: Automatically detects game launches, town transitions, and store reloads, seamlessly maintaining memory integrity in the background.
 - **Client Version Verification**: Parses client metadata and memory signatures upon connection to verify compatibility with v11.4.1a, providing a non-intrusive warning if a mismatched client update is detected.
 - **100% Offline & Standalone**: Operates entirely offline with zero external network requests, scraping, or telemetry. Built exclusively with Python standard libraries.
-- **Zero-Bloat Compressed Asset Delivery**: Catalog portraits are bundled in multi-part archives (`web/assets_part*.zip`, each < 18 MB to comply with GitHub's 25 MB web upload limit). The suite automatically unpacks them on first launch if unextracted.
+- **Zero-Bloat Compressed Asset Delivery**: Catalog portraits are bundled in multi-part archives (`web/assets_part*.zip`). The suite automatically unpacks them on first launch if unextracted.
 
 ---
 
