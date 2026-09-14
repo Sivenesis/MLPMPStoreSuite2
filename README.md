@@ -1,4 +1,7 @@
-# MLP Store Suite II
+# DEPRECATED, INCORPORATED IN: [MLPMP Full Suite](https://github.com/Sivenesis/MLPMPFullSuite/)
+
+
+## MLP Store Suite II
 
 High-Performance In-Memory Store Patcher & Purchase Enabler for Windows (x64)
 
